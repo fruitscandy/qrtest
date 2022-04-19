@@ -47,7 +47,8 @@ function generateUrl(sns, url, options) {
     case 'facebook':
       return `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`
     case 'naver-blog':
-      url = url.replaceAll('+', encodeURIComponent('+'))
+      // url = url.replaceAll('+', encodeURIComponent('+'))
+      url = encodeURIComponent(url)
       return `https://share.naver.com/web/shareView?url=${encodeURIComponent(url)}&title=${options?.title}`
     default:
       return ''
