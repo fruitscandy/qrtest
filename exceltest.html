@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Export Table to Excel</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.2.1/exceljs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+</head>
+<body>
+    <table id="myTable" border="1">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Age</th>
+                <th>City</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>John Doe</td>
+                <td>30</td>
+                <td>New York</td>
+            </tr>
+            <tr>
+                <td>Jane Smith</td>
+                <td>25</td>
+                <td>Los Angeles</td>
+            </tr>
+            <!-- 추가 행을 포함하여 데이터가 더 많을 수 있습니다 -->
+        </tbody>
+    </table>
+    <button onclick="exportTableToExcel('myTable', 'table.xlsx')">Export to Excel</button>
+    
+    <script>
+        async function exportTableToExcel(tableID, filename = '') {
+            var workbook = new ExcelJS.Workbook();
+            var worksheet = workbook.addWorksheet('Sheet1');
+
+            var table = document.getElementById(tableID);
+            var rows = table.querySelectorAll('tr');
+
+            rows.forEach((row, rowIndex) => {
+                var cells = row.querySelectorAll('td, th');
+                var excelRow = worksheet.getRow(rowIndex + 1);
+
+                cells.forEach((cell, cellIndex) => {
+                    var excelCell = excelRow.getCell(cellIndex + 1);
+                    excelCell.value = cell.innerText;
+
+                    // 스타일 적용 예제
+                    excelCell.font = {
+                        name: 'Arial',
+                        size: 12,
+                        color: { argb: 'FF000000' },
+                        bold: rowIndex === 0 // 첫 번째 행은 굵게
+                    };
+
+                    excelCell.fill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: rowIndex % 2 === 0 ? 'FFFFAA00' : 'FFFFFFFF' } // 짝수 행과 홀수 행 색상 다르게
+                    };
+
+                    excelCell.border = {
+                        top: { style: 'thin', color: { argb: 'FF000000' } },
+                        bottom: { style: 'thin', color: { argb: 'FF000000' } },
+                        left: { style: 'thin', color: { argb: 'FF000000' } },
+                        right: { style: 'thin', color: { argb: 'FF000000' } }
+                    };
+                });
+            });
+
+            // 헤더 고정 설정
+            worksheet.views = [
+                { state: 'frozen', ySplit: 1 } // 첫 번째 행 고정
+            ];
+
+            // 엑셀 파일 다운로드
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            saveAs(blob, filename || 'table.xlsx');
+        }
+    </script>
+</body>
+</html>
