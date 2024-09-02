@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>회비 통장</title>
+  <style>
+    body {
+      background-color: #121212;
+      color: #ffffff;
+      font-family: sans-serif;
+    }
+    .container {
+      width: 90%;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 2em;
+      margin-bottom: 20px;
+    }
+    .transaction-group {
+      margin-bottom: 20px;
+    }
+    .transaction-date {
+      font-size: 0.8em;
+      color: #888;
+      margin-bottom: 5px;
+    }
+    .transaction {
+      display: flex;
+      align-items: center; 
+      padding: 10px 0;
+      border-bottom: 1px solid #333;
+    }
+    .transaction-content {
+      display: flex;
+      flex-direction: column;
+      flex-grow: 1;
+      margin-left: 10px;
+    }
+    .transaction-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .transaction-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background-color: #ffffff; 
+      color: black;
+      margin-right: 10px;
+    }
+    .transaction-icon span {
+      font-size: 1.2em;
+    }
+    .transaction-type {
+      font-size: 1.2em;
+    }
+    .transaction-amount {
+      font-size: 1.5em;
+      font-weight: bold;
+      text-align: right;
+    }
+    .transaction-amount.positive {
+      color: #2196f3; 
+    }
+    .transaction-amount.negative {
+      color: #ffffff; 
+    }
+    .transaction-balance {
+      font-size: 0.8em;
+      color: #888;
+      text-align: right;
+      margin-top: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>회비 통장</h1>
+
+    <div id="transactionList">
+      <!-- 거래 내역이 여기에 추가됩니다. -->
+    </div>
+  </div>
+
+  <script>
+    const transactionList = document.getElementById('transactionList');
+
+    // 샘플 데이터 생성 함수
+    function generateRandomTransactions() {
+      const transactions = [];
+      let balance = 1000000;
+      const fixedInterest = 37; // 고정 이자
+
+      const startDate = new Date(2024, 0, 1); // 2024년 1월 1일
+      const endDate = new Date(2024, 8, 30); // 2024년 9월 30일 
+
+      // 날짜순으로 데이터 생성
+      for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
+        const formattedDate = `${date.getMonth() + 1}월 ${date.getDate()}일`;
+
+        // 매일 고정 이자 추가
+        balance += fixedInterest;
+        transactions.push({
+          date: formattedDate,
+          type: '자동 이자',
+          amount: fixedInterest,
+          balance: balance,
+        });
+
+        // 5일에 1~3회 입출금 내역 생성
+        if (Math.random() < 0.2) {
+          const numTransactions = Math.floor(Math.random() * 3) + 1;
+          for (let j = 0; j < numTransactions; j++) {
+            const types = ['채우기', '공간 삭제', '기타'];
+            const type = types[Math.floor(Math.random() * types.length)];
+            const amount = Math.floor(Math.random() * 100000) * (Math.random() < 0.5 ? -1 : 1);
+            balance += amount;
+            transactions.push({
+              date: formattedDate,
+              type: type,
+              amount: amount,
+              balance: balance,
+            });
+          }
+        }
+      }
+
+      return transactions;
+    }
+
+    // 거래 내역을 날짜별로 그룹화
+    function groupTransactionsByDate(transactions) {
+      const groupedTransactions = {};
+
+      // 전체 배열을 역순으로 정렬
+      transactions.reverse();
+
+      transactions.forEach(transaction => {
+        const date = transaction.date;
+        if (!groupedTransactions[date]) {
+          groupedTransactions[date] = [];
+        }
+        groupedTransactions[date].push(transaction);
+      });
+      return groupedTransactions;
+    }
+
+    // 거래 내역 HTML 생성 함수
+    function createTransactionHTML(transaction) {
+      const amountClass = transaction.amount > 0 ? 'positive' : 'negative';
+      const amountPrefix = transaction.amount > 0 ? '+' : ''; 
+      const transactionHTML = `
+        <div class="transaction">
+          <div class="transaction-icon">
+            <span>#</span>
+          </div>
+          <div class="transaction-content">
+            <div class="transaction-header">
+              <div class="transaction-type">${transaction.type}</div>
+              <div class="transaction-amount ${amountClass}">
+                ${amountPrefix}${transaction.amount.toLocaleString()}원
+              </div>
+            </div>
+            <div class="transaction-balance">${transaction.balance.toLocaleString()}원</div>
+          </div>
+        </div>
+      `;
+      return transactionHTML;
+    }
+
+    // 거래 내역 표시
+    const transactions = generateRandomTransactions();
+    const groupedTransactions = groupTransactionsByDate(transactions);
+
+    for (const date in groupedTransactions) {
+      let transactionHTML = `<div class="transaction-group">
+                              <div class="transaction-date">${date}</div>`;
+      groupedTransactions[date].forEach(transaction => {
+        transactionHTML += createTransactionHTML(transaction);
+      });
+      transactionHTML += '</div>';
+      transactionList.innerHTML += transactionHTML;
+    }
+  </script>
+</body>
+</html>
