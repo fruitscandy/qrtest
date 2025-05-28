@@ -2,40 +2,228 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Storage Iframe Echo Server</title>
-<style>body{font:14px/1.4 monospace}pre{white-space:pre-wrap}</style>
+<title>Storage Iframe with IndexedDB</title>
+<style>
+  body { font: 14px/1.4 monospace; background-color: #f0f0f0; color: #333; margin: 0; padding: 1em; }
+  pre { white-space: pre-wrap; background-color: #fff; border: 1px solid #ccc; padding: 1em; border-radius: 4px; max-height: 400px; overflow-y: auto;}
+  h2 { color: #1a1a1a; }
+  p { color: #555; }
+</style>
 </head>
 <body>
-<h2>📦 Storage Iframe – Message Echo</h2>
-<p>수신한 메시지와 발신 origin 목록이 여기에 나타납니다.</p>
-<pre id="log"></pre>
+<h2>📦 Iframe IndexedDB Storage Manager</h2>
+<p>This iframe handles IndexedDB operations based on messages from its parent. Logs will appear below.</p>
+<pre id="log">Initializing...\n</pre>
 
 <script>
-const $log = document.getElementById('log');
-const origins = new Set();
+  const $log = document.getElementById('log');
+  const log = (message) => {
+    console.log('[IFRAME LOG]', message);
+    $log.textContent += `${new Date().toISOString()}: ${message}\n`;
+    $log.scrollTop = $log.scrollHeight; // Auto-scroll
+  };
 
-/** 화면에 로그 남기기 + 자동 스크롤 */
-function log(line) {
-  $log.textContent += line + '\n';
-  $log.scrollTop = $log.scrollHeight;
-}
+  const DB_NAME = 'IframeContentDB';
+  const STORE_NAME = 'iframeDataStore';
+  const DB_VERSION = 1;
+  let db;
+  let PARENT_ORIGIN = null; // Will be set on first valid message or can be hardcoded
 
-/** 메시지 수신 */
-window.addEventListener('message', e => {
-  const { origin, data, source } = e;
-  origins.add(origin);
+  // 1. --- IndexedDB Utility Functions ---
+  const openDB = () => {
+    return new Promise((resolve, reject) => {
+      if (db) {
+        resolve(db);
+        return;
+      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onupgradeneeded = (event) => {
+        const tempDb = event.target.result;
+        if (!tempDb.objectStoreNames.contains(STORE_NAME)) {
+          tempDb.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+          log(`Object store "${STORE_NAME}" created.`);
+        }
+      };
+      request.onsuccess = (event) => {
+        db = event.target.result;
+        log(`Database "${DB_NAME}" opened successfully.`);
+        resolve(db);
+      };
+      request.onerror = (event) => {
+        log(`IndexedDB error: ${event.target.error}`);
+        reject(event.target.error);
+      };
+    });
+  };
 
-  log(`▶ 받음 from ${origin}\n  data: ${JSON.stringify(data)}`);
+  const addItemToDB = async (itemData) => {
+    const currentDb = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = currentDb.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      // Ensure itemData doesn't have an 'id' if autoIncrement is used,
+      // or handle cases where 'id' might be provided.
+      // For simplicity, assuming itemData is like { content: '...', ... }
+      const request = store.add(itemData);
+      request.onsuccess = () => resolve(request.result); // Returns the new key
+      request.onerror = () => reject(request.error);
+    });
+  };
 
-  /* 발신자에게 에코 응답 */
-  source?.postMessage(
-    { received: true, echo: data, yourOrigin: origin, allOrigins: [...origins] },
-    origin                      // **반드시 정확한 origin으로 한정**
-  );
-});
+  const getAllItemsFromDB = async () => {
+    const currentDb = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = currentDb.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  };
 
-/* 자체 기동 확인 로그 */
-log('Storage iframe ready. Wait for postMessage() …');
+  const getItemFromDB = async (id) => {
+    const currentDb = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = currentDb.transaction(STORE_NAME, 'readonly');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.get(id);
+      request.onsuccess = () => resolve(request.result); // Returns item or undefined
+      request.onerror = () => reject(request.error);
+    });
+  };
+
+  const updateItemInDB = async (item) => {
+    // item must include the key (e.g., 'id')
+    if (!item.hasOwnProperty('id')) {
+        return Promise.reject(new Error("Item must have an 'id' property for update."));
+    }
+    const currentDb = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = currentDb.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.put(item);
+      request.onsuccess = () => resolve(request.result); // Returns the key
+      request.onerror = () => reject(request.error);
+    });
+  };
+
+  const deleteItemFromDB = async (id) => {
+    const currentDb = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = currentDb.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.delete(id);
+      request.onsuccess = () => resolve(); // No specific result on success
+      request.onerror = () => reject(request.error);
+    });
+  };
+
+  const clearStoreInDB = async () => {
+    const currentDb = await openDB();
+    return new Promise((resolve, reject) => {
+      const transaction = currentDb.transaction(STORE_NAME, 'readwrite');
+      const store = transaction.objectStore(STORE_NAME);
+      const request = store.clear();
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  };
+
+
+  // 2. --- Message Event Listener ---
+  window.addEventListener('message', async (event) => {
+    // IMPORTANT: Security - Verify the origin of the message
+    // For a production app, you might want to hardcode the expected parent origin
+    // or have a more robust way of establishing trust.
+    // For this example, we'll dynamically set it on first valid contact OR
+    // assume your parent app's origin is where initial messages come from.
+    if (!PARENT_ORIGIN) {
+        // A simple way: trust the first message origin if it contains an init command.
+        // Or, you might know your parent app's origin.
+        // Example: PARENT_ORIGIN = "http://localhost:3000"; or your deployed app's origin.
+        // For now, let's be a bit more open but log it.
+        log(`Potentially setting PARENT_ORIGIN to: ${event.origin}`);
+        // If you want to restrict, uncomment and set your parent's actual origin:
+        // if (event.origin !== "YOUR_PARENT_APP_ACTUAL_ORIGIN_HERE") {
+        //   log(`Message from untrusted origin: ${event.origin}. Ignoring.`);
+        //   return;
+        // }
+        PARENT_ORIGIN = event.origin; // Be cautious with this in production.
+    } else if (event.origin !== PARENT_ORIGIN) {
+        log(`Message from unexpected origin: ${event.origin}. Expected: ${PARENT_ORIGIN}. Ignoring.`);
+        return;
+    }
+
+
+    const { action, payload, messageId } = event.data;
+    log(`◀ Received action: "${action}" from ${event.origin} (messageId: ${messageId || 'N/A'})`);
+    if (payload) log(`   payload: ${JSON.stringify(payload)}`);
+
+    let responsePayload;
+
+    try {
+      await openDB(); // Ensure DB is ready
+
+      switch (action) {
+        case 'IFRAME_ADD_ITEM':
+          if (!payload || !payload.content) throw new Error('Payload with content is required for ADD_ITEM.');
+          const newItemId = await addItemToDB(payload);
+          responsePayload = { status: 'success', action, result: { id: newItemId, ...payload }, messageId };
+          break;
+
+        case 'IFRAME_GET_ALL_ITEMS':
+          const items = await getAllItemsFromDB();
+          responsePayload = { status: 'success', action, result: items, messageId };
+          break;
+
+        case 'IFRAME_GET_ITEM':
+          if (!payload || !payload.hasOwnProperty('id')) throw new Error('Payload with id is required for GET_ITEM.');
+          const item = await getItemFromDB(payload.id);
+          responsePayload = { status: 'success', action, result: item, messageId };
+          break;
+
+        case 'IFRAME_UPDATE_ITEM':
+          if (!payload || !payload.hasOwnProperty('id') || !payload.content) throw new Error('Payload with id and content is required for UPDATE_ITEM.');
+          const updatedKey = await updateItemInDB(payload);
+          responsePayload = { status: 'success', action, result: {updatedKey, ...payload}, messageId };
+          break;
+
+        case 'IFRAME_DELETE_ITEM':
+          if (!payload || !payload.hasOwnProperty('id')) throw new Error('Payload with id is required for DELETE_ITEM.');
+          await deleteItemFromDB(payload.id);
+          responsePayload = { status: 'success', action, result: {id: payload.id }, messageId };
+          break;
+
+        case 'IFRAME_CLEAR_STORE':
+            await clearStoreInDB();
+            responsePayload = { status: 'success', action, messageId };
+            break;
+        
+        case 'IFRAME_ECHO': // Simple echo for testing connection
+            responsePayload = { status: 'success', action, result: payload, yourOrigin: event.origin, messageId };
+            break;
+
+        default:
+          log(`Unknown action: ${action}`);
+          responsePayload = { status: 'error', action, error: `Unknown action: ${action}`, messageId };
+      }
+    } catch (error) {
+      log(`Error processing action "${action}": ${error.message}`);
+      responsePayload = { status: 'error', action, error: error.message, stack: error.stack, messageId };
+    }
+
+    if (event.source && responsePayload) {
+      log(`▶ Sending response to ${event.origin} for action "${action}" (messageId: ${messageId || 'N/A'})`);
+      if(responsePayload.status === 'success' && responsePayload.result) log(`   result: ${JSON.stringify(responsePayload.result).substring(0,100)}...`);
+      if(responsePayload.status === 'error') log(`   error: ${responsePayload.error}`);
+      event.source.postMessage(responsePayload, event.origin); // Respond to the source's origin
+    }
+  });
+
+  // 3. --- Initialization ---
+  log('Iframe IndexedDB script loaded and ready. Listening for messages...');
+  openDB().catch(err => log(`Initial DB setup failed: ${err.message}`));
+
 </script>
 </body>
 </html>
