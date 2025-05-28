@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Storage Iframe Echo Server</title>
+<style>body{font:14px/1.4 monospace}pre{white-space:pre-wrap}</style>
+</head>
+<body>
+<h2>📦 Storage Iframe – Message Echo</h2>
+<p>수신한 메시지와 발신 origin 목록이 여기에 나타납니다.</p>
+<pre id="log"></pre>
+
+<script>
+const $log = document.getElementById('log');
+const origins = new Set();
+
+/** 화면에 로그 남기기 + 자동 스크롤 */
+function log(line) {
+  $log.textContent += line + '\n';
+  $log.scrollTop = $log.scrollHeight;
+}
+
+/** 메시지 수신 */
+window.addEventListener('message', e => {
+  const { origin, data, source } = e;
+  origins.add(origin);
+
+  log(`▶ 받음 from ${origin}\n  data: ${JSON.stringify(data)}`);
+
+  /* 발신자에게 에코 응답 */
+  source?.postMessage(
+    { received: true, echo: data, yourOrigin: origin, allOrigins: [...origins] },
+    origin                      // **반드시 정확한 origin으로 한정**
+  );
+});
+
+/* 자체 기동 확인 로그 */
+log('Storage iframe ready. Wait for postMessage() …');
+</script>
+</body>
+</html>
