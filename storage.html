@@ -23,6 +23,10 @@
     $log.scrollTop = $log.scrollHeight; // Auto-scroll
   };
 
+  // Add these near the top of your <script> in storage.html
+  let currentDbVersion = 1; // Initial DB version
+  let pendingSchemaDefinition = null; // To store schema details from parent
+  // Example: pendingSchemaDefinition = { storeName: 'newStore', keyPath: 'myKey', autoIncrement: true, indexes: [{name: 'byName', keyPath: 'name', unique: false}] };
   const DB_NAME = 'IframeContentDB';
   const STORE_NAME = 'iframeDataStore';
   const DB_VERSION = 1;
