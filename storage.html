@@ -27,8 +27,14 @@
   const STORE_NAME = 'iframeDataStore';
   const DB_VERSION = 1;
   let db;
-  let PARENT_ORIGIN = null; // Will be set on first valid message or can be hardcoded
 
+  const isAllowedOrigin = (origin) => {
+    if (origin && origin.endsWith('usercontent.goog')) {
+      return true;
+    }
+    return false;
+  }
+  
   // 1. --- IndexedDB Utility Functions ---
   const openDB = () => {
     return new Promise((resolve, reject) => {
@@ -137,20 +143,9 @@
     // or have a more robust way of establishing trust.
     // For this example, we'll dynamically set it on first valid contact OR
     // assume your parent app's origin is where initial messages come from.
-    if (!PARENT_ORIGIN) {
-        // A simple way: trust the first message origin if it contains an init command.
-        // Or, you might know your parent app's origin.
-        // Example: PARENT_ORIGIN = "http://localhost:3000"; or your deployed app's origin.
-        // For now, let's be a bit more open but log it.
-        log(`Potentially setting PARENT_ORIGIN to: ${event.origin}`);
-        // If you want to restrict, uncomment and set your parent's actual origin:
-        // if (event.origin !== "YOUR_PARENT_APP_ACTUAL_ORIGIN_HERE") {
-        //   log(`Message from untrusted origin: ${event.origin}. Ignoring.`);
-        //   return;
-        // }
-        PARENT_ORIGIN = event.origin; // Be cautious with this in production.
-    } else if (event.origin !== PARENT_ORIGIN) {
-        log(`Message from unexpected origin: ${event.origin}. Expected: ${PARENT_ORIGIN}. Ignoring.`);
+    if (!isAllowedOrigin(event.origin)) {
+    } else {
+        log(`Message from unexpected origin: ${event.origin}. Ignoring.`);
         return;
     }
 
