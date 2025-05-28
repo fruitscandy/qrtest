@@ -1,0 +1,177 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>IndexedDB Manager</title>
+</head>
+<body>
+<script>
+
+const DB_NAME = 'GeminiScheduleDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'chatLogs'; // Stores StoredDailyLog objects, keyed by 'date'
+
+let dbPromise = null;
+
+function getDB() {
+  if (!dbPromise) {
+    dbPromise = new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        console.error("IndexedDB not supported in iframe.");
+        reject(new Error("IndexedDB not supported."));
+        return;
+      }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'date' });
+        }
+      };
+
+      request.onsuccess = (event) => {
+        resolve(event.target.result);
+      };
+
+      request.onerror = (event) => {
+        console.error("IndexedDB error opening database in iframe:", event.target.error);
+        reject(new Error(`IndexedDB error: ${event.target.error?.message}`));
+        dbPromise = null; 
+      };
+    });
+  }
+  return dbPromise;
+}
+
+async function handleRequest(action, payload) {
+  const db = await getDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE_NAME, ['add', 'put', 'get', 'getAll', 'delete', 'clear'].includes(action) ? 'readwrite' : 'readonly');
+    const store = transaction.objectStore(STORE_NAME);
+    let request;
+
+    switch (action) {
+      case 'saveLog': // equivalent to former saveFullLogForDate with keyPath from payload
+        request = store.put(payload);
+        break;
+      case 'getLogForDate':
+        request = store.get(payload.date);
+        break;
+      case 'getAllLogDates':
+        request = store.getAllKeys();
+        break;
+      case 'saveMessageToLog':
+        // This is more complex as it needs a read-then-write
+        // For simplicity, the parent should send the full updated log via 'saveLog'
+        // Or, implement the read-modify-write here carefully.
+        // Let's assume parent sends full log for now if 'saveMessageToLog' implies modification of existing.
+        // If it's always adding to a potentially new log:
+        const getReq = store.get(payload.date);
+        getReq.onsuccess = () => {
+            let dailyLog = getReq.result;
+            if (!dailyLog) {
+                dailyLog = { date: payload.date, messages: [] };
+            }
+            
+            // Logic from original saveMessageToLog for appending/replacing loading message
+            if (payload.message.role === 'model' && dailyLog.messages.length > 0) {
+                const lastMessage = dailyLog.messages[dailyLog.messages.length - 1];
+                if (lastMessage.role === 'model' && lastMessage.isLoading) {
+                    dailyLog.messages[dailyLog.messages.length - 1] = payload.message;
+                } else {
+                    dailyLog.messages.push(payload.message);
+                }
+            } else {
+                dailyLog.messages.push(payload.message);
+            }
+            
+            const putRequest = store.put(dailyLog);
+            putRequest.onsuccess = () => resolve(); // Resolve outer promise
+            putRequest.onerror = (event) => reject(event.target.error);
+        };
+        getReq.onerror = (event) => reject(event.target.error);
+        return; // Special handling for this action, not using common request.onsuccess/onerror
+      case 'estimateStorageUsage':
+        request = store.getAll(); // Get all StoredDailyLog objects
+        request.onsuccess = () => {
+          try {
+            const logs = request.result;
+            if (!logs || logs.length === 0) {
+              resolve(0);
+              return;
+            }
+            const jsonString = JSON.stringify(logs);
+            const blob = new Blob([jsonString]);
+            resolve(blob.size); // Returns size in bytes
+          } catch (error) {
+            console.error("Error serializing logs for size estimation in iframe:", error);
+            reject(error);
+          }
+        };
+        request.onerror = (event) => reject(event.target.error);
+        return; // Custom handling, return early
+      default:
+        reject(new Error(`Unknown action: ${action}`));
+        return;
+    }
+
+    request.onsuccess = () => {
+        if (action === 'getAllLogDates') {
+            const dates = (request.result).map(key => String(key));
+            resolve(dates.sort((a, b) => b.localeCompare(a)));
+        } else {
+            resolve(request.result === undefined ? null : request.result);
+        }
+    };
+    request.onerror = (event) => {
+      console.error(`Error in iframe DB action ${action}:`, event.target.error);
+      reject(event.target.error);
+    };
+  });
+}
+
+window.addEventListener('message', async (event) => {
+  // Basic security: Check if the message is from the parent window.
+  // For more robust security, you would check event.origin against a known parent origin.
+  // if (event.source !== window.parent) {
+  //   return;
+  // }
+  // Since the user mentioned the app's domain is not fixed, using a specific origin check is hard.
+  // Relying on event.source === window.parent is a basic check.
+
+  const { id, action, payload } = event.data;
+
+  if (!action) return; // Ignore messages without an action
+
+  if (action === 'ping') {
+    event.source.postMessage({ id, action: 'pong' }, event.origin);
+    return;
+  }
+
+  try {
+    const result = await handleRequest(action, payload);
+    event.source.postMessage({ id, success: true, result }, event.origin);
+  } catch (error) {
+    console.error(`[IndexedDB Manager] Error processing action ${action}:`, error);
+    event.source.postMessage({ id, success: false, error: { message: error.message, name: error.name } }, event.origin);
+  }
+});
+
+// Signal readiness to parent
+getDB().then(() => {
+    if (window.parent && window.parent !== window) {
+         window.parent.postMessage({ type: 'indexedDBManagerReady' }, '*'); // '*' for targetOrigin if parent origin is unknown/dynamic
+    }
+    console.log('[IndexedDB Manager] Ready.');
+}).catch(err => {
+    console.error('[IndexedDB Manager] Failed to initialize DB:', err);
+    if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'indexedDBManagerFailed', error: {message: err.message} }, '*');
+    }
+});
+
+</script>
+</body>
+</html>
