@@ -7,19 +7,17 @@
 </head>
 <body>
 <script>
-
-
-
 const DB_NAME = 'GeminiScheduleDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'chatLogs'; // Stores StoredDailyLog objects, keyed by 'date'
 
 let dbPromise = null;
+let initializationComplete = false;
+let dbInitializationResult = { ready: false, error: null };
 
 function getDB() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
-      // Timeout for the open request itself
       const openTimeoutDuration = 15000; // 15 seconds
       let openTimeoutId = setTimeout(() => {
         console.error(`[IndexedDB Manager] indexedDB.open() timed out after ${openTimeoutDuration / 1000}s.`);
@@ -36,7 +34,6 @@ function getDB() {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
 
       request.onupgradeneeded = (event) => {
-        // No need to clear timeout here, as onsuccess or onerror will still fire.
         console.log("[IndexedDB Manager] onupgradeneeded triggered.");
         const db = event.target.result;
         if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -55,7 +52,6 @@ function getDB() {
         clearTimeout(openTimeoutId);
         console.error("[IndexedDB Manager] Error opening IndexedDB:", event.target.error);
         reject(new Error(`IndexedDB error: ${event.target.error?.message || 'Unknown DB open error'}`));
-        // Removed: dbPromise = null; 
       };
     });
   }
@@ -64,7 +60,7 @@ function getDB() {
 
 async function handleRequest(action, payload) {
   console.log(`[IndexedDB Manager] Handling request: ${action}`, payload || '');
-  const db = await getDB();
+  const db = await getDB(); // This ensures DB is attempted to be opened if not already
   return new Promise((resolve, reject) => {
     const writeActions = ['saveLog', 'saveMessageToLog']; 
     const transactionMode = writeActions.includes(action) ? 'readwrite' : 'readonly';
@@ -83,7 +79,6 @@ async function handleRequest(action, payload) {
         console.warn(`[IndexedDB Manager] Transaction aborted for action ${action}:`, event.target.error);
         reject(event.target.error || new Error('Transaction aborted'));
     };
-
 
     switch (action) {
       case 'saveLog':
@@ -175,7 +170,23 @@ window.addEventListener('message', async (event) => {
 
   if (action === 'ping') {
     console.log("[IndexedDB Manager] Received ping, sending pong for id:", id);
-    event.source.postMessage({ id, action: 'pong' }, event.origin || '*');
+    event.source.postMessage({ id, action: 'pong', success: true }, event.origin || '*'); // Added success for consistency
+    return;
+  }
+
+  if (action === 'getReadyStatus') {
+    console.log("[IndexedDB Manager] Received getReadyStatus request for id:", id);
+    if (initializationComplete) {
+      if (dbInitializationResult.ready) {
+        event.source.postMessage({ id, success: true, result: { type: 'iframeIsReady' } }, event.origin || '*');
+      } else {
+        event.source.postMessage({ id, success: true, result: { type: 'iframeHasFailed', error: { message: dbInitializationResult.error?.message, name: dbInitializationResult.error?.name } } }, event.origin || '*');
+      }
+    } else {
+      // Should ideally not happen if parent pings first and waits.
+      console.warn("[IndexedDB Manager] getReadyStatus queried before initialization was complete. This is unexpected.");
+      event.source.postMessage({ id, success: false, error: { message: 'Manager not yet initialized.' } }, event.origin || '*');
+    }
     return;
   }
 
@@ -190,36 +201,17 @@ window.addEventListener('message', async (event) => {
 
 (async () => {
   try {
-    console.log('[IndexedDB Manager] Initializing and attempting to signal parent...');
+    console.log('[IndexedDB Manager] Initializing DB...');
     await getDB(); 
-    
-    if (window.parent && window.parent !== window) {
-      try {
-        window.parent.postMessage({ type: 'indexedDBManagerReady' }, '*');
-        console.log('[IndexedDB Manager] "indexedDBManagerReady" signal sent successfully.');
-      } catch (e) {
-        console.error('[IndexedDB Manager] CRITICAL: Error occurred while trying to post "indexedDBManagerReady" message:', e);
-        try {
-          window.parent.postMessage({ type: 'indexedDBManagerFailed', error: { message: 'Failed to send ready signal post-DB-init: ' + e.message, name: 'PostMessageError' } }, '*');
-        } catch (e2) {
-          console.error('[IndexedDB Manager] CRITICAL: Failed to post fallback "indexedDBManagerFailed" message after "indexedDBManagerReady" post error:', e2);
-        }
-      }
-    } else {
-      console.log('[IndexedDB Manager] DB Initialized (no parent to notify or running standalone).');
-    }
+    dbInitializationResult = { ready: true, error: null };
+    console.log('[IndexedDB Manager] DB Initialization successful.');
   } catch (dbError) {
     console.error('[IndexedDB Manager] DB Initialization process failed:', dbError);
-    if (window.parent && window.parent !== window) {
-      try {
-        window.parent.postMessage({ type: 'indexedDBManagerFailed', error: { message: dbError.message, name: dbError.name || 'DBInitError' } }, '*');
-        console.log('[IndexedDB Manager] "indexedDBManagerFailed" signal sent successfully due to DB error.');
-      } catch (e) {
-        console.error('[IndexedDB Manager] CRITICAL: Error occurred while trying to post "indexedDBManagerFailed" message after DB error:', e);
-      }
-    } else {
-      console.error('[IndexedDB Manager] DB Initialization Failed (no parent to notify or running standalone).');
-    }
+    dbInitializationResult = { ready: false, error: dbError };
+  } finally {
+    initializationComplete = true;
+    console.log('[IndexedDB Manager] Initialization attempt complete. Ready to respond to getReadyStatus.');
+    // No longer sends unsolicited ready/failed messages.
   }
 })();
 
