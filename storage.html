@@ -36,27 +36,75 @@
   }
   
   // 1. --- IndexedDB Utility Functions ---
-  const openDB = () => {
+  // Modify the openDB function in storage.html
+  const openDB = () => { // Version is now handled by the global currentDbVersion
     return new Promise((resolve, reject) => {
-      if (db) {
-        resolve(db);
-        return;
+      // If db is already open and an upgrade is needed, it should be closed before calling indexedDB.open with a new version.
+      // For simplicity, ensure db is closed if pendingSchemaDefinition exists and a new version is about to be used.
+      if (db && pendingSchemaDefinition) {
+          db.close();
+          db = null; // Reset db instance
+          log('Closed existing DB connection to apply schema changes.');
       }
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+  
+      const request = indexedDB.open(DB_NAME, currentDbVersion);
+  
       request.onupgradeneeded = (event) => {
         const tempDb = event.target.result;
-        if (!tempDb.objectStoreNames.contains(STORE_NAME)) {
-          tempDb.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
-          log(`Object store "${STORE_NAME}" created.`);
+        log(`onupgradeneeded: Upgrading DB to version ${currentDbVersion}.`);
+  
+        if (pendingSchemaDefinition) {
+          const schema = pendingSchemaDefinition;
+          if (!tempDb.objectStoreNames.contains(schema.storeName)) {
+            const storeOptions = { keyPath: schema.keyPath };
+            if (typeof schema.autoIncrement === 'boolean') {
+              storeOptions.autoIncrement = schema.autoIncrement;
+            }
+            const objectStore = tempDb.createObjectStore(schema.storeName, storeOptions);
+            log(`Object store "${schema.storeName}" created with keyPath: "${schema.keyPath}", autoIncrement: ${storeOptions.autoIncrement}.`);
+  
+            if (schema.indexes && schema.indexes.length > 0) {
+              schema.indexes.forEach(idx => {
+                // Ensure idx.keyPath is valid
+                if (typeof idx.keyPath === 'string' || Array.isArray(idx.keyPath)) {
+                  objectStore.createIndex(idx.name, idx.keyPath, { unique: !!idx.unique, multiEntry: !!idx.multiEntry });
+                  log(`Index "${idx.name}" created on store "${schema.storeName}" for keyPath "${idx.keyPath}".`);
+                } else {
+                  log(`Error: Invalid keyPath type for index "${idx.name}". Must be string or array of strings.`);
+                }
+              });
+            }
+          } else {
+            log(`Object store "${schema.storeName}" already exists. Schema definition was for an existing store.`);
+            // Here you could decide if you want to allow altering existing stores, e.g. adding new indexes.
+            // For simplicity, this example focuses on creating new stores.
+          }
+          // It's generally safer to clear pendingSchemaDefinition after the 'onsuccess' of the open request.
+        } else {
+          // Fallback: If no pending operation, ensure a default store exists (optional)
+          // This maintains original behavior if no schema messages are sent.
+          const defaultStoreName = 'iframeDataStore'; // Original store name
+          if (!tempDb.objectStoreNames.contains(defaultStoreName)) {
+              tempDb.createObjectStore(defaultStoreName, { keyPath: 'id', autoIncrement: true });
+              log(`Default object store "${defaultStoreName}" created as no specific schema operation was pending.`);
+          }
         }
       };
+  
       request.onsuccess = (event) => {
         db = event.target.result;
-        log(`Database "${DB_NAME}" opened successfully.`);
+        log(`Database "${DB_NAME}" (version ${db.version}) opened successfully.`);
+        if (pendingSchemaDefinition) {
+          // If a schema operation was pending and onupgradeneeded (if triggered) completed:
+          log(`Schema operation for "${pendingSchemaDefinition.storeName}" (if any) has been processed.`);
+          pendingSchemaDefinition = null; // Clear the pending definition now that the DB is successfully opened/upgraded.
+        }
         resolve(db);
       };
+  
       request.onerror = (event) => {
-        log(`IndexedDB error: ${event.target.error}`);
+        log(`IndexedDB error during open/upgrade: ${event.target.error}`);
+        pendingSchemaDefinition = null; // Clear on error as well
         reject(event.target.error);
       };
     });
@@ -196,7 +244,35 @@
         case 'IFRAME_ECHO': // Simple echo for testing connection
             responsePayload = { status: 'success', action, result: payload, yourOrigin: event.origin, messageId };
             break;
-
+        // Inside the switch (action) block in storage.html:
+        case 'IFRAME_DEFINE_SCHEMA': // Or a more specific name like IFRAME_CREATE_STORE
+          if (!payload || !payload.storeName || !payload.keyPath) {
+            throw new Error('Payload with storeName and keyPath (and optionally autoIncrement, indexes) is required for IFRAME_DEFINE_SCHEMA.');
+          }
+          log(`◀ Received action: "${action}" with schema for store: ${payload.storeName}`);
+        
+          // Prepare for potential DB upgrade
+          currentDbVersion++; // Increment version to trigger onupgradeneeded
+          pendingSchemaDefinition = {
+            storeName: payload.storeName,
+            keyPath: payload.keyPath,
+            autoIncrement: payload.autoIncrement, // e.g., true or false
+            indexes: payload.indexes || []       // e.g., [{ name: 'byName', keyPath: 'name', unique: false }]
+          };
+          log(`   New target DB version: ${currentDbVersion}. Pending schema: ${JSON.stringify(pendingSchemaDefinition)}`);
+        
+          try {
+            await openDB(); // This will attempt to open with the new version, triggering onupgradeneeded
+            responsePayload = { status: 'success', action, result: `Schema definition for "${payload.storeName}" processed. DB version is now ${db.version}.`, messageId };
+          } catch (dbError) {
+            // If openDB fails (e.g., during upgrade), pendingSchemaDefinition is cleared by openDB's error handler.
+            // Revert version increment if schema update failed critically before `onupgradeneeded` or `onsuccess`.
+            // This part is tricky; robust error handling for versioning is complex.
+            // currentDbVersion--; // Potentially revert, or manage versions more carefully.
+            log(`Error applying schema for "${payload.storeName}": ${dbError.message}`);
+            throw new Error(`Failed to apply schema for "${payload.storeName}": ${dbError.message}`);
+          }
+          break;
         default:
           log(`Unknown action: ${action}`);
           responsePayload = { status: 'error', action, error: `Unknown action: ${action}`, messageId };
